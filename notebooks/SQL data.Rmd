@@ -1,0 +1,194 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+title : "Using SQL query to data"
+
+```
+```{r}
+library (DBI)
+```
+```{r}
+filename <- "../data/prod_sample.db"
+my_connection <- dbConnect(RSQLite::SQLite(),
+                           dbname=filename)
+```
+```{r}
+my_connection
+```
+```{r}
+dbListTables(my_connection)
+```
+```{sql connection=my_connection}
+select *
+from online_retail_history
+limit 10
+
+```
+```{sql connection=my_connection}
+select *
+from stock_description
+limit 5
+
+```
+```{sql connection=my_connection}
+select COUNT(Invoice)
+from online_retail_history
+```
+
+
+```{sql connection=my_connection}
+select count(*) as number_rows
+from online_retail_history
+```
+```{sql connection=my_connection}
+select count(*) as number_rows
+from online_retail_history
+```
+```{sql connection=my_connection}
+select count (*) as number_rows
+from stock_description
+
+```
+```{sql connection=my_connection}
+select sum(quantity) as total_quantity
+from online_retail_history
+
+```
+```{sql connection=my_connection}
+select avg(price) as avg_price
+from online_retail_history
+
+
+```
+```{sql connection=my_connection}
+select min(price)
+from online_retail_history
+where price > 0
+
+```
+```{sql connection=my_connection}
+select max(price)
+from online_retail_history
+
+```
+
+```{r}
+```
+
+
+```{r}
+dbListTables(my_connection)
+```
+```{sql connection=my_connection}
+select * from online_retail_history
+```
+```{sql connection=my_connection}
+select count (*) from online_retail_history
+
+```
+```{sql connection=my_connection}
+select min(InvoiceDate) from online_retail_history
+
+```
+```{sql connection=my_connection}
+select max(InvoiceDate) from online_retail_history
+```
+```{sql connection=my_connection}
+select avg(price) 
+from online_retail_history
+where country = "United Kingdom"
+```
+
+```{sql connection=my_connection}
+select distinct CustomerID
+from online_retail_history
+```
+```{sql connection=my_connection}
+select count(distinct CustomerID) as number_unique_customer
+from online_retail_history
+```
+
+```{sql connection=my_connection}
+select Country,
+count(distinct CustomerID) as number_unique_customers
+from online_retail_history
+group by country
+
+
+```
+
+```{sql connection=my_connection}
+select country
+from online_retail_history
+group by Country
+order by count(distinct CustomerID) desc
+limit 1
+
+```
+```{sql connection=my_connection}
+select count(distinct Invoice) as unique_Invoice
+from online_retail_history
+
+```
+```{sql connection=my_connection}
+select * from stock_description
+
+```
+```{sql connection=my_connection}
+select count(distinct StockCode) as unique_stockcode
+from stock_description 
+
+```
+```{sql connection=my_connection}
+select count(distinct StockCode) as unique_stockcode
+from online_retail_history
+
+```
+```{sql connection=my_connection}
+select count(StockCode)
+from stock_description 
+where description = "?"
+
+```
+```{sql connection=my_connection}
+select count(Invoice)
+from online_retail_history
+where Invoice < 0
+
+```
+```{sql connection=my_connection}
+select stockcode, 
+sum(quantity)
+from online_retail_history
+group by stockcode
+order by sum(quantity) desc
+limit 1
+ 
+```
+```{sql connection=my_connection}
+select description
+from stock_description
+where stockcode = 22197
+
+
+```
+
+```{r}
+dbDisconnect(my_connection)
+```
+
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
