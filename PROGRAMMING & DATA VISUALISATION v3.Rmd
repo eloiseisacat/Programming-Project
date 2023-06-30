@@ -150,7 +150,7 @@ ggplot(thin_query_results, aes(x = reorder(film_name, rt_score), y = rt_score)) 
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-# Step 23: Since we're going to get an average score depending on both IMDB and Rotten Tomatoes scores, I want to analyze these variables' relationship. Here's a scatter plot between imdb_score and Rotten Tomatoes Average Score.
+# Step 23: Since we're going to get an average score depending on both IMDB and Rotten Tomatoes scores, We want to analyze these variables' relationship. Here's a scatter plot between imdb_score and Rotten Tomatoes Average Score.
 ```{r}
 ggplot(query_results, aes(x = rt_score, y = imdb_score)) +
   geom_point() +
