@@ -1,0 +1,232 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-06-07"
+---
+
+# Step 1: Defining the title and output type.
+```{r}
+"title: SQL Chunk Example
+output: html_document"
+```
+
+# Step 2: Configuring the behavior of subsequent R code chunks in the notebook.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Step 3: Defining the libraries.
+```{r load_libraries}
+library(RSQLite)
+library(DBI)
+```
+
+
+# Step 3: Defining the libraries.
+```{r load_libraries}
+if (!require("RSQLite")) install.packages("RSQLite")
+if (!require("DBI")) install.packages("DBI")
+if (!require("knitr")) install.packages("knitr")
+if (!require("plotly")) install.packages("plotly")
+if (!require("ggplot2")) install.packages("ggplot2")
+library(RSQLite)
+library(DBI)
+library(plotly)
+library(ggplot2)
+```
+
+# Step 4: Establishing the database connection
+```{r establish_connection}
+# Establish the database connection
+con <- dbConnect(RSQLite::SQLite(), dbname =  "/Users/yashwinimoolchandani/Downloads/exam_database.db")
+```
+
+# Step 5: Viewing the rows of imdb_scores
+```{sql, connection = con}
+select * from imdb_scores
+```
+# Step 6: There are some nulls in likes. I'd like to count how many of these likes are null.
+```{sql, connection = con}
+select count(*) from imdb_scores where likes is null
+```
+# Step 7: I'd like to see how many rows imdb_likes contains.
+```{sql, connection = con}
+select count(*) from imdb_scores
+```
+
+# Step 8: In fact there are several nulls in "likes", I want to check if there's any in "score".
+```{sql, connection = con}
+select count(*) from imdb_scores where score is null
+```
+
+# Step 9: Moving on the rotten_tomatoes_scores. Viewing the rows.
+```{sql, connection = con}
+select * from rotten_tomatoes_scores
+```
+# Step 10: Counting how many rows in rotten_tomatoes_scores.
+```{sql, connection = con}
+select count(*) from rotten_tomatoes_scores
+```
+# Step 11: Checking if there's any null values like imdb_score table. Starting with audience_score.
+```{sql, connection = con}
+select count(*) from rotten_tomatoes_scores where audience_score is null
+```
+
+# Step 12: Now looking to critic_score.
+```{sql, connection = con}
+select count(*) from rotten_tomatoes_scores where critic_score is null
+```
+
+
+# Step 13: Now looking to films table. Checking the rows.
+```{sql, connection = con}
+select * from films
+```
+# Step 14: Counting how many rows in films table.
+```{sql, connection = con}
+select count(*) from films
+```
+
+# Step 15: This is our query.
+```{sql, connection = con, results='markup', output.var = "query_results"}
+SELECT f.film_id, f.film_name, f."genre(s)", f.time_period, f.release_year, rt.audience_score AS rt_audience_score, rt.critic_score AS rt_critic_score, im.score AS imdb_score, im.likes AS imdb_likes
+FROM films f
+LEFT JOIN rotten_tomatoes_scores rt ON f.film_id = rt.film_id
+LEFT JOIN imdb_scores im ON im.film_id = rt.film_id
+WHERE f.release_year BETWEEN 1970 AND 2017
+ORDER BY f.release_year ASC
+```
+# Step 16: Since there are so many null values in imdb_likes, i want to exclude it from our query.
+```{sql, connection = con, results='markup', output.var = "query_results"}
+SELECT f.film_id, f.film_name, f."genre(s)", f.time_period, f.release_year, rt.audience_score AS rt_audience_score, rt.critic_score AS rt_critic_score, im.score AS imdb_score
+FROM films f
+LEFT JOIN rotten_tomatoes_scores rt ON f.film_id = rt.film_id
+LEFT JOIN imdb_scores im ON im.film_id = rt.film_id
+WHERE f.release_year BETWEEN 1970 AND 2017
+ORDER BY f.release_year ASC
+```
+
+
+# Step 16: Closing the database connection
+```{r close_connection}
+# Close the database connection
+dbDisconnect(con)
+```
+
+# Step 17: Printing the results for reviewing.
+```{r}
+print(query_results)
+```
+# Step 19: Creating a scatter plot in order to analyze audience and critic scores for Rotten Tomatoes.
+```{r}
+ggplot(query_results, aes(x = rt_audience_score, y = rt_critic_score)) +
+  geom_point() +
+  labs(x = "Rotten Tomatoes Audience Score", y = "Rotten Tomatoes Critic Score", title = "Comparison of Audience Score and Critic Score")
+```
+  
+# Step 20: Calculating an average score for Rotten Tomatoes scores.
+```{r}
+query_results$rt_score <- with(query_results, (rt_audience_score + rt_critic_score) / 2)
+```
+
+# Step 21: Sorting the films by score in descending order.
+```{r}
+query_results <- query_results[order(query_results$rt_score, decreasing = TRUE), ]
+print(query_results)
+```
+
+# Step 22: Creating a bar plot to visualize the film scores.
+```{r}
+library(dplyr)
+
+thin_factor <- 100
+
+thin_query_results <- query_results %>%
+  filter(row_number() %% thin_factor == 0)
+
+ggplot(thin_query_results, aes(x = reorder(film_name, rt_score), y = rt_score)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Film", y = "Rotten Tomatoes Average Score", title = "RT Average Scores (Worst to Best)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Step 23: Since we're going to get an average score depending on both IMDB and Rotten Tomatoes scores, I want to analyze these variables' relationship. Here's a scatter plot between imdb_score and Rotten Tomatoes Average Score.
+```{r}
+ggplot(query_results, aes(x = rt_score, y = imdb_score)) +
+  geom_point() +
+  labs(x = "Rotten Tomatoes Average Score", y = "IMDB Score", title = "Comparison of RT Average and IMDB Score")
+```
+
+# Step 24: Calculating an average score for movies, depending on both IMDB Scores and Rotten Tomatoes average scores.
+```{r}
+query_results$avg_score <- with(query_results, (imdb_score + rt_score) / 2)
+```
+
+# Step 25: Sorting the films by average score in descending order, in order to view best to worst.
+```{r}
+query_results <- query_results[order(query_results$avg_score, decreasing = TRUE), , drop = FALSE]
+print(query_results)
+```
+# Step 26: Dropped unneeccesary columns for better viewing.
+```{r}
+query_results <- query_results[, !(colnames(query_results) %in% c("rt_audience_score", "rt_critic_score", "imdb_score", "rt_score", "time_period"))]
+print(query_results)
+```
+
+# Step 27: Sorting the films by average score in descending order, in order to view worst to worst.
+```{r}
+query_results <- query_results[order(query_results$avg_score), , drop = FALSE]
+print(query_results)
+```
+# Step 28: Bar chart of average scores, worst to best.
+```{r}
+library(dplyr)
+
+thin_factor <- 100
+
+thin_query_results <- query_results %>%
+  filter(row_number() %% thin_factor == 0)
+
+ggplot(thin_query_results, aes(x = reorder(film_name, avg_score), y = avg_score)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Genre", y = "Average Score", title = "Movies by Average Score (Worst to Best)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Step 29: Now I want to analyze genres best to worst and worst to best. Creating a new dataframe with the average score and genre(s).
+```{r}
+genre_avg_scores <- aggregate(avg_score ~ `genre(s)`, query_results, mean)
+```
+
+# Step 30: Sorting the genres from best to worst based on average score.
+```{r}
+genre_avg_scores <- genre_avg_scores[order(genre_avg_scores$avg_score, decreasing = TRUE), ]
+```
+
+# Step 31: Printing the genres from best to worst.
+```{r}
+print(genre_avg_scores)
+```
+# Step 32: Sorting the genres from worst to best based on average score.
+```{r}
+genre_avg_scores <- genre_avg_scores[order(genre_avg_scores$avg_score), ]
+```
+
+# Step 33: Printing the genres from worst to best.
+```{r}
+print(genre_avg_scores)
+```
+# Step 34: Bar chart
+```{r}
+library(dplyr)
+
+thin_factor <- 10
+
+thin_genre_avg_scores <- genre_avg_scores %>%
+  filter(row_number() %% thin_factor == 0)
+
+ggplot(thin_genre_avg_scores, aes(x = reorder(`genre(s)`, avg_score), y = avg_score)) +
+  geom_bar(stat = "identity", fill = "skyblue") +
+  labs(x = "Genre", y = "Average Score", title = "Genres by Average Score (Worst to Best)") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
