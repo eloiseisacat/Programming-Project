@@ -173,7 +173,7 @@ query_results <- query_results[, !(colnames(query_results) %in% c("rt_audience_s
 print(query_results)
 ```
 
-# Step 27: Sorting the films by average score in descending order, in order to view worst to worst.
+# Step 27: Sorting the films by average score in descending order, in order to view worst to best.
 ```{r}
 query_results <- query_results[order(query_results$avg_score), , drop = FALSE]
 print(query_results)
