@@ -45,16 +45,16 @@ con <- dbConnect(RSQLite::SQLite(), dbname =  "/Users/yashwinimoolchandani/Downl
 ```{sql, connection = con}
 select * from imdb_scores
 ```
-# Step 6: There are some nulls in likes. I'd like to count how many of these likes are null.
+# Step 6: There are some nulls in likes. We'd like to count how many of these likes are null.
 ```{sql, connection = con}
 select count(*) from imdb_scores where likes is null
 ```
-# Step 7: I'd like to see how many rows imdb_likes contains.
+# Step 7: We'd like to see how many rows imdb_likes contains.
 ```{sql, connection = con}
 select count(*) from imdb_scores
 ```
 
-# Step 8: In fact there are several nulls in "likes", I want to check if there's any in "score".
+# Step 8: In fact there are several nulls in "likes", We want to check if there's any in "score".
 ```{sql, connection = con}
 select count(*) from imdb_scores where score is null
 ```
@@ -96,7 +96,7 @@ LEFT JOIN imdb_scores im ON im.film_id = rt.film_id
 WHERE f.release_year BETWEEN 1970 AND 2017
 ORDER BY f.release_year ASC
 ```
-# Step 16: Since there are so many null values in imdb_likes, i want to exclude it from our query.
+# Step 16: Since there are so many null values in imdb_likes, We want to exclude it from our query.
 ```{sql, connection = con, results='markup', output.var = "query_results"}
 SELECT f.film_id, f.film_name, f."genre(s)", f.time_period, f.release_year, rt.audience_score AS rt_audience_score, rt.critic_score AS rt_critic_score, im.score AS imdb_score
 FROM films f
@@ -193,7 +193,7 @@ ggplot(thin_query_results, aes(x = reorder(film_name, avg_score), y = avg_score)
   theme(axis.text.x = element_text(angle = 45, hjust = 1))
 ```
 
-# Step 29: Now I want to analyze genres best to worst and worst to best. Creating a new dataframe with the average score and genre(s).
+# Step 29: Now We want to analyze genres best to worst and worst to best. Creating a new dataframe with the average score and genre(s).
 ```{r}
 genre_avg_scores <- aggregate(avg_score ~ `genre(s)`, query_results, mean)
 ```
