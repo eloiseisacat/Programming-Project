@@ -1,0 +1,627 @@
+import numpy as np
+import pandas as pd
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.ensemble import RandomForestClassifier, IsolationForest
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, precision_recall_curve
+import xgboost as xgb
+from imblearn.over_sampling import SMOTE
+import networkx as nx
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime, timedelta
+from collections import deque, defaultdict
+import warnings
+warnings.filterwarnings('ignore')
+
+# Set random seed for reproducibility
+np.random.seed(42)
+
+class InvestorNetwork:
+    """Analyze investor networks for Ponzi detection"""
+    
+    def __init__(self):
+        self.graph = nx.DiGraph()
+        
+    def build_network(self, transactions_df):
+        """Build investment network from transactions"""
+        for _, txn in transactions_df.iterrows():
+            self.graph.add_edge(
+                txn['from_investor'],
+                txn['to_investor'],
+                amount=txn['amount'],
+                timestamp=txn['timestamp']
+            )
+        return self.graph
+    
+    def calculate_network_features(self):
+        """Calculate graph-based features for Ponzi detection"""
+        if len(self.graph.nodes()) == 0:
+            return {}
+        
+        features = {}
+        
+        # Basic network metrics
+        features['num_nodes'] = self.graph.number_of_nodes()
+        features['num_edges'] = self.graph.number_of_edges()
+        features['density'] = nx.density(self.graph)
+        
+        # Degree centrality (who has most connections)
+        in_degrees = dict(self.graph.in_degree())
+        out_degrees = dict(self.graph.out_degree())
+        features['avg_in_degree'] = np.mean(list(in_degrees.values())) if in_degrees else 0
+        features['max_in_degree'] = max(in_degrees.values()) if in_degrees else 0
+        features['avg_out_degree'] = np.mean(list(out_degrees.values())) if out_degrees else 0
+        
+        # PageRank (identify key influencers)
+        try:
+            pagerank = nx.pagerank(self.graph, max_iter=100)
+            features['max_pagerank'] = max(pagerank.values())
+            features['pagerank_concentration'] = np.std(list(pagerank.values()))
+        except:
+            features['max_pagerank'] = 0
+            features['pagerank_concentration'] = 0
+        
+        # Clustering coefficient (how interconnected are neighbors)
+        try:
+            clustering = nx.clustering(self.graph.to_undirected())
+            features['avg_clustering'] = np.mean(list(clustering.values())) if clustering else 0
+        except:
+            features['avg_clustering'] = 0
+        
+        # Connected components (separate groups)
+        if not nx.is_empty(self.graph):
+            weakly_connected = list(nx.weakly_connected_components(self.graph))
+            features['num_components'] = len(weakly_connected)
+            features['largest_component_ratio'] = len(max(weakly_connected, key=len)) / len(self.graph.nodes())
+        else:
+            features['num_components'] = 0
+            features['largest_component_ratio'] = 0
+        
+        # Pyramid structure detection (typical of Ponzi schemes)
+        features['pyramid_score'] = self._detect_pyramid_structure()
+        
+        # Money flow analysis
+        features['flow_imbalance'] = self._calculate_flow_imbalance()
+        
+        return features
+    
+    def _detect_pyramid_structure(self):
+        """Detect pyramid-like hierarchical structure"""
+        if len(self.graph.nodes()) < 3:
+            return 0
+        
+        # Count nodes at each level (using BFS from top nodes)
+        try:
+            # Find potential "top" nodes (high out-degree, low in-degree)
+            top_nodes = [n for n in self.graph.nodes() 
+                        if self.graph.out_degree(n) > self.graph.in_degree(n)]
+            
+            if not top_nodes:
+                return 0
+            
+            # Measure branching factor
+            levels = []
+            for top_node in top_nodes[:3]:  # Check top 3 potential roots
+                level_counts = []
+                visited = {top_node}
+                current_level = [top_node]
+                
+                while current_level and len(level_counts) < 5:
+                    level_counts.append(len(current_level))
+                    next_level = []
+                    for node in current_level:
+                        neighbors = [n for n in self.graph.successors(node) if n not in visited]
+                        next_level.extend(neighbors)
+                        visited.update(neighbors)
+                    current_level = next_level
+                
+                if len(level_counts) >= 3:
+                    # Check if each level grows (pyramid pattern)
+                    growth = [level_counts[i+1] / (level_counts[i] + 1) for i in range(len(level_counts)-1)]
+                    levels.append(np.mean(growth))
+            
+            return np.mean(levels) if levels else 0
+        except:
+            return 0
+    
+    def _calculate_flow_imbalance(self):
+        """Calculate imbalance between money in and out (Ponzi indicator)"""
+        try:
+            in_flows = defaultdict(float)
+            out_flows = defaultdict(float)
+            
+            for u, v, data in self.graph.edges(data=True):
+                out_flows[u] += data.get('amount', 0)
+                in_flows[v] += data.get('amount', 0)
+            
+            imbalances = []
+            for node in self.graph.nodes():
+                in_flow = in_flows[node]
+                out_flow = out_flows[node]
+                if in_flow + out_flow > 0:
+                    imbalance = abs(out_flow - in_flow) / (in_flow + out_flow)
+                    imbalances.append(imbalance)
+            
+            return np.mean(imbalances) if imbalances else 0
+        except:
+            return 0
+    
+    def visualize_network(self, scheme_name="Investment Scheme", save_path='network_viz.png'):
+        """Visualize the investor network"""
+        if len(self.graph.nodes()) == 0:
+            print("No network to visualize")
+            return
+        
+        plt.figure(figsize=(14, 10))
+        
+        # Use spring layout for visualization
+        pos = nx.spring_layout(self.graph, k=2, iterations=50)
+        
+        # Color nodes by their degree (influence)
+        node_colors = [self.graph.degree(n) for n in self.graph.nodes()]
+        
+        # Draw
+        nx.draw_networkx_nodes(self.graph, pos, node_color=node_colors, 
+                              node_size=300, cmap='YlOrRd', alpha=0.7)
+        nx.draw_networkx_edges(self.graph, pos, alpha=0.3, arrows=True, 
+                              arrowsize=10, edge_color='gray')
+        
+        # Only label high-degree nodes to avoid clutter
+        high_degree_nodes = {n: n for n in self.graph.nodes() if self.graph.degree(n) > 3}
+        nx.draw_networkx_labels(self.graph, pos, labels=high_degree_nodes, font_size=8)
+        
+        plt.title(f'Investor Network: {scheme_name}', fontsize=16, fontweight='bold')
+        plt.colorbar(plt.cm.ScalarMappable(cmap='YlOrRd'), 
+                    label='Node Degree (Connections)', ax=plt.gca())
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Network visualization saved as '{save_path}'")
+
+
+class RealTimeMonitor:
+    """Real-time monitoring system for Ponzi scheme detection"""
+    
+    def __init__(self, model, scaler, alert_threshold=0.7, window_size=100):
+        self.model = model
+        self.scaler = scaler
+        self.alert_threshold = alert_threshold
+        self.window_size = window_size
+        
+        # Monitoring state
+        self.transaction_buffer = deque(maxlen=window_size)
+        self.metrics_history = []
+        self.alerts = []
+        self.scheme_scores = {}
+        
+    def process_transaction(self, transaction):
+        """Process a new transaction in real-time"""
+        self.transaction_buffer.append(transaction)
+        
+        # Calculate rolling metrics
+        if len(self.transaction_buffer) >= 10:
+            metrics = self._calculate_rolling_metrics()
+            self.metrics_history.append({
+                'timestamp': datetime.now(),
+                'metrics': metrics
+            })
+            
+            # Check for alerts
+            self._check_alerts(metrics, transaction['scheme_id'])
+    
+    def _calculate_rolling_metrics(self):
+        """Calculate metrics from recent transaction window"""
+        df = pd.DataFrame(list(self.transaction_buffer))
+        
+        metrics = {}
+        metrics['avg_return'] = df['return_rate'].mean()
+        metrics['return_volatility'] = df['return_rate'].std()
+        metrics['transaction_velocity'] = len(df) / (df['timestamp'].max() - df['timestamp'].min()).total_seconds() * 3600  # per hour
+        metrics['avg_investment_size'] = df['amount'].mean()
+        metrics['new_investor_ratio'] = (df['is_new_investor'] == 1).sum() / len(df)
+        metrics['withdrawal_ratio'] = (df['transaction_type'] == 'withdrawal').sum() / len(df)
+        
+        return metrics
+    
+    def _check_alerts(self, metrics, scheme_id):
+        """Check if metrics trigger alerts"""
+        # Create feature vector for prediction
+        features = pd.DataFrame([{
+            'avg_return': metrics['avg_return'],
+            'return_volatility': metrics['return_volatility'],
+            'return_consistency': 1 - metrics['return_volatility'],  # Inverse of volatility
+            'investor_growth_rate': metrics['new_investor_ratio'],
+            'withdrawal_success_rate': 1 - metrics['withdrawal_ratio'],
+            'recruitment_incentive': 0.1,  # Would need actual data
+            'transparency_score': 0.5,  # Would need actual data
+            'business_revenue_ratio': 0.5,  # Would need actual data
+            'investor_concentration': 0.3,  # Would need actual data
+            'time_since_inception': 12,  # Would need actual data
+            'withdrawal_delay_avg': 5,  # Would need actual data
+            'marketing_aggression': 0.3,  # Would need actual data
+            'guaranteed_return_claim': 0,  # Would need actual data
+            'network_clustering': 0.4,  # Would need actual data
+        }])
+        
+        # Add engineered features
+        features['return_risk_score'] = (
+            features['avg_return'] * 2 + 
+            (1 - features['return_volatility']) + 
+            features['return_consistency']
+        ) / 4
+        features['growth_anomaly'] = features['investor_growth_rate'] * features['recruitment_incentive']
+        features['operational_red_flags'] = (
+            (1 - features['withdrawal_success_rate']) + 
+            (1 - features['transparency_score']) + 
+            (1 - features['business_revenue_ratio'])
+        ) / 3
+        features['network_suspicion'] = features['network_clustering'] * features['investor_concentration']
+        features['time_pressure'] = features['withdrawal_delay_avg'] / features['time_since_inception']
+        
+        # Scale and predict
+        features_scaled = self.scaler.transform(features)
+        ponzi_probability = self.model.predict_proba(features_scaled)[0, 1]
+        
+        # Store score
+        self.scheme_scores[scheme_id] = ponzi_probability
+        
+        # Generate alert if threshold exceeded
+        if ponzi_probability > self.alert_threshold:
+            alert = {
+                'timestamp': datetime.now(),
+                'scheme_id': scheme_id,
+                'ponzi_probability': ponzi_probability,
+                'severity': 'HIGH' if ponzi_probability > 0.85 else 'MEDIUM',
+                'metrics': metrics
+            }
+            self.alerts.append(alert)
+            self._send_alert(alert)
+    
+    def _send_alert(self, alert):
+        """Send alert notification"""
+        print("\n" + "="*60)
+        print(f"🚨 PONZI SCHEME ALERT - {alert['severity']} RISK")
+        print("="*60)
+        print(f"Timestamp: {alert['timestamp']}")
+        print(f"Scheme ID: {alert['scheme_id']}")
+        print(f"Ponzi Probability: {alert['ponzi_probability']:.1%}")
+        print(f"\nKey Metrics:")
+        for key, value in alert['metrics'].items():
+            print(f"  {key}: {value:.4f}")
+        print("="*60 + "\n")
+    
+    def get_dashboard_data(self):
+        """Get data for monitoring dashboard"""
+        return {
+            'active_schemes': len(set(t['scheme_id'] for t in self.transaction_buffer)),
+            'total_transactions': len(self.transaction_buffer),
+            'alerts_count': len(self.alerts),
+            'high_risk_schemes': [k for k, v in self.scheme_scores.items() if v > 0.8],
+            'recent_alerts': self.alerts[-5:] if self.alerts else []
+        }
+    
+    def plot_monitoring_dashboard(self):
+        """Create monitoring dashboard visualization"""
+        if len(self.metrics_history) < 2:
+            print("Not enough data for dashboard")
+            return
+        
+        fig, axes = plt.subplots(2, 2, figsize=(15, 10))
+        fig.suptitle('Real-Time Ponzi Detection Dashboard', fontsize=16, fontweight='bold')
+        
+        # Extract time series data
+        timestamps = [m['timestamp'] for m in self.metrics_history]
+        avg_returns = [m['metrics']['avg_return'] for m in self.metrics_history]
+        volatilities = [m['metrics']['return_volatility'] for m in self.metrics_history]
+        new_investor_ratios = [m['metrics']['new_investor_ratio'] for m in self.metrics_history]
+        withdrawal_ratios = [m['metrics']['withdrawal_ratio'] for m in self.metrics_history]
+        
+        # Plot 1: Returns over time
+        axes[0, 0].plot(timestamps, avg_returns, 'b-', linewidth=2)
+        axes[0, 0].axhline(y=0.20, color='r', linestyle='--', label='High Risk Threshold')
+        axes[0, 0].set_title('Average Returns Over Time')
+        axes[0, 0].set_ylabel('Return Rate')
+        axes[0, 0].legend()
+        axes[0, 0].grid(True, alpha=0.3)
+        
+        # Plot 2: Volatility over time
+        axes[0, 1].plot(timestamps, volatilities, 'g-', linewidth=2)
+        axes[0, 1].axhline(y=0.05, color='r', linestyle='--', label='Low Volatility Alert')
+        axes[0, 1].set_title('Return Volatility Over Time')
+        axes[0, 1].set_ylabel('Volatility')
+        axes[0, 1].legend()
+        axes[0, 1].grid(True, alpha=0.3)
+        
+        # Plot 3: New investor ratio
+        axes[1, 0].plot(timestamps, new_investor_ratios, 'orange', linewidth=2)
+        axes[1, 0].axhline(y=0.30, color='r', linestyle='--', label='High Growth Alert')
+        axes[1, 0].set_title('New Investor Ratio')
+        axes[1, 0].set_ylabel('Ratio')
+        axes[1, 0].legend()
+        axes[1, 0].grid(True, alpha=0.3)
+        
+        # Plot 4: Withdrawal ratio
+        axes[1, 1].plot(timestamps, withdrawal_ratios, 'purple', linewidth=2)
+        axes[1, 1].axhline(y=0.40, color='r', linestyle='--', label='High Withdrawal Alert')
+        axes[1, 1].set_title('Withdrawal Ratio')
+        axes[1, 1].set_ylabel('Ratio')
+        axes[1, 1].legend()
+        axes[1, 1].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('monitoring_dashboard.png', dpi=300, bbox_inches='tight')
+        print("Monitoring dashboard saved as 'monitoring_dashboard.png'")
+
+
+class PonziDetector:
+    def __init__(self):
+        self.scaler = StandardScaler()
+        self.model = None
+        self.feature_importance = None
+        
+    def generate_synthetic_data(self, n_legitimate=800, n_ponzi=200):
+        """Generate synthetic investment scheme data"""
+        data = []
+        
+        # Generate legitimate investment schemes
+        for i in range(n_legitimate):
+            scheme = {
+                'scheme_id': f'LEG_{i}',
+                'avg_return': np.random.normal(0.08, 0.15),
+                'return_volatility': np.random.uniform(0.05, 0.25),
+                'return_consistency': np.random.uniform(0.3, 0.7),
+                'investor_growth_rate': np.random.uniform(0.02, 0.15),
+                'withdrawal_success_rate': np.random.uniform(0.85, 0.99),
+                'recruitment_incentive': np.random.uniform(0, 0.05),
+                'transparency_score': np.random.uniform(0.6, 1.0),
+                'business_revenue_ratio': np.random.uniform(0.7, 1.0),
+                'investor_concentration': np.random.uniform(0.1, 0.4),
+                'time_since_inception': np.random.uniform(24, 120),
+                'withdrawal_delay_avg': np.random.uniform(1, 5),
+                'marketing_aggression': np.random.uniform(0.1, 0.5),
+                'guaranteed_return_claim': 0 if np.random.random() > 0.1 else 1,
+                'network_clustering': np.random.uniform(0.1, 0.4),
+                'is_ponzi': 0
+            }
+            data.append(scheme)
+        
+        # Generate Ponzi schemes
+        for i in range(n_ponzi):
+            scheme = {
+                'scheme_id': f'PON_{i}',
+                'avg_return': np.random.normal(0.25, 0.10),
+                'return_volatility': np.random.uniform(0.01, 0.08),
+                'return_consistency': np.random.uniform(0.75, 0.98),
+                'investor_growth_rate': np.random.uniform(0.20, 0.60),
+                'withdrawal_success_rate': np.random.uniform(0.40, 0.85),
+                'recruitment_incentive': np.random.uniform(0.10, 0.30),
+                'transparency_score': np.random.uniform(0.1, 0.5),
+                'business_revenue_ratio': np.random.uniform(0.0, 0.3),
+                'investor_concentration': np.random.uniform(0.5, 0.9),
+                'time_since_inception': np.random.uniform(6, 36),
+                'withdrawal_delay_avg': np.random.uniform(7, 30),
+                'marketing_aggression': np.random.uniform(0.6, 1.0),
+                'guaranteed_return_claim': 1 if np.random.random() > 0.3 else 0,
+                'network_clustering': np.random.uniform(0.6, 0.95),
+                'is_ponzi': 1
+            }
+            data.append(scheme)
+        
+        df = pd.DataFrame(data)
+        return df
+    
+    def generate_transaction_network(self, scheme_type='ponzi', n_investors=50, n_transactions=200):
+        """Generate synthetic transaction network"""
+        transactions = []
+        base_time = datetime.now() - timedelta(days=90)
+        
+        if scheme_type == 'ponzi':
+            # Ponzi: pyramid structure with high recruitment
+            for i in range(n_transactions):
+                from_inv = f"INV_{np.random.randint(0, min(10, n_investors))}"  # Top recruiters
+                to_inv = f"INV_{np.random.randint(0, n_investors)}"
+                
+                transactions.append({
+                    'from_investor': from_inv,
+                    'to_investor': to_inv,
+                    'amount': np.random.exponential(5000),
+                    'timestamp': base_time + timedelta(hours=i*2),
+                    'scheme_id': 'PONZI_001',
+                    'return_rate': np.random.normal(0.25, 0.05),
+                    'transaction_type': 'investment' if np.random.random() > 0.3 else 'withdrawal',
+                    'is_new_investor': 1 if np.random.random() > 0.4 else 0
+                })
+        else:
+            # Legitimate: more distributed network
+            for i in range(n_transactions):
+                from_inv = f"INV_{np.random.randint(0, n_investors)}"
+                to_inv = f"INV_{np.random.randint(0, n_investors)}"
+                
+                transactions.append({
+                    'from_investor': from_inv,
+                    'to_investor': to_inv,
+                    'amount': np.random.exponential(3000),
+                    'timestamp': base_time + timedelta(hours=i*3),
+                    'scheme_id': 'LEGIT_001',
+                    'return_rate': np.random.normal(0.08, 0.12),
+                    'transaction_type': 'investment' if np.random.random() > 0.15 else 'withdrawal',
+                    'is_new_investor': 1 if np.random.random() > 0.7 else 0
+                })
+        
+        return pd.DataFrame(transactions)
+    
+    def engineer_features(self, df):
+        """Create additional engineered features"""
+        df = df.copy()
+        
+        df['return_risk_score'] = (
+            df['avg_return'] * 2 + 
+            (1 - df['return_volatility']) + 
+            df['return_consistency']
+        ) / 4
+        
+        df['growth_anomaly'] = (
+            df['investor_growth_rate'] * df['recruitment_incentive']
+        )
+        
+        df['operational_red_flags'] = (
+            (1 - df['withdrawal_success_rate']) + 
+            (1 - df['transparency_score']) + 
+            (1 - df['business_revenue_ratio'])
+        ) / 3
+        
+        df['network_suspicion'] = (
+            df['network_clustering'] * df['investor_concentration']
+        )
+        
+        df['time_pressure'] = df['withdrawal_delay_avg'] / df['time_since_inception']
+        
+        return df
+    
+    def prepare_data(self, df):
+        """Prepare features and target for modeling"""
+        feature_cols = [col for col in df.columns if col not in ['scheme_id', 'is_ponzi']]
+        X = df[feature_cols]
+        y = df['is_ponzi']
+        return X, y
+    
+    def train_xgboost(self, X_train, y_train):
+        """Train XGBoost classifier"""
+        print("\n=== Training XGBoost ===")
+        
+        scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+        
+        xgb_model = xgb.XGBClassifier(
+            n_estimators=200,
+            max_depth=6,
+            learning_rate=0.05,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            scale_pos_weight=scale_pos_weight,
+            random_state=42,
+            eval_metric='auc'
+        )
+        xgb_model.fit(X_train, y_train)
+        
+        return xgb_model
+    
+    def evaluate_model(self, model, X_test, y_test, model_name="Model"):
+        """Evaluate model performance"""
+        print(f"\n=== {model_name} Evaluation ===")
+        
+        y_pred_proba = model.predict_proba(X_test)[:, 1]
+        y_pred = (y_pred_proba > 0.5).astype(int)
+        
+        print("\nClassification Report:")
+        print(classification_report(y_test, y_pred, target_names=['Legitimate', 'Ponzi']))
+        
+        print("\nConfusion Matrix:")
+        cm = confusion_matrix(y_test, y_pred)
+        print(cm)
+        
+        roc_auc = roc_auc_score(y_test, y_pred_proba)
+        print(f"\nROC-AUC Score: {roc_auc:.3f}")
+        
+        return y_pred, y_pred_proba
+
+
+def main():
+    print("=" * 80)
+    print("ADVANCED PONZI SCHEME DETECTION WITH NETWORK ANALYSIS & REAL-TIME MONITORING")
+    print("=" * 80)
+    
+    detector = PonziDetector()
+    
+    # 1. Generate and train basic model
+    print("\n[PHASE 1] Training Base Model...")
+    df = detector.generate_synthetic_data(n_legitimate=800, n_ponzi=200)
+    df = detector.engineer_features(df)
+    X, y = detector.prepare_data(df)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    
+    X_train_scaled = detector.scaler.fit_transform(X_train)
+    X_test_scaled = detector.scaler.transform(X_test)
+    X_train_scaled = pd.DataFrame(X_train_scaled, columns=X_train.columns)
+    X_test_scaled = pd.DataFrame(X_test_scaled, columns=X_test.columns)
+    
+    smote = SMOTE(random_state=42)
+    X_train_balanced, y_train_balanced = smote.fit_resample(X_train_scaled, y_train)
+    
+    xgb_model = detector.train_xgboost(X_train_balanced, y_train_balanced)
+    detector.evaluate_model(xgb_model, X_test_scaled, y_test, "XGBoost")
+    
+    # 2. Network Analysis
+    print("\n[PHASE 2] Network Analysis...")
+    
+    # Analyze Ponzi network
+    print("\n--- Analyzing PONZI Scheme Network ---")
+    ponzi_txns = detector.generate_transaction_network('ponzi', n_investors=50, n_transactions=200)
+    ponzi_network = InvestorNetwork()
+    ponzi_network.build_network(ponzi_txns)
+    ponzi_features = ponzi_network.calculate_network_features()
+    
+    print("\nPonzi Network Features:")
+    for key, value in ponzi_features.items():
+        print(f"  {key}: {value:.4f}")
+    
+    ponzi_network.visualize_network("PONZI Scheme", 'ponzi_network.png')
+    
+    # Analyze Legitimate network
+    print("\n--- Analyzing LEGITIMATE Scheme Network ---")
+    legit_txns = detector.generate_transaction_network('legitimate', n_investors=50, n_transactions=200)
+    legit_network = InvestorNetwork()
+    legit_network.build_network(legit_txns)
+    legit_features = legit_network.calculate_network_features()
+    
+    print("\nLegitimate Network Features:")
+    for key, value in legit_features.items():
+        print(f"  {key}: {value:.4f}")
+    
+    legit_network.visualize_network("Legitimate Scheme", 'legitimate_network.png')
+    
+    # 3. Real-Time Monitoring
+    print("\n[PHASE 3] Real-Time Monitoring Simulation...")
+    monitor = RealTimeMonitor(xgb_model, detector.scaler, alert_threshold=0.7)
+    
+    # Simulate real-time transaction stream
+    print("\nSimulating transaction stream...")
+    test_txns = detector.generate_transaction_network('ponzi', n_investors=30, n_transactions=150)
+    
+    for _, txn in test_txns.iterrows():
+        monitor.process_transaction(txn.to_dict())
+    
+    # Display dashboard
+    dashboard = monitor.get_dashboard_data()
+    print("\n" + "="*60)
+    print("MONITORING DASHBOARD")
+    print("="*60)
+    print(f"Active Schemes: {dashboard['active_schemes']}")
+    print(f"Total Transactions Processed: {dashboard['total_transactions']}")
+    print(f"Alerts Generated: {dashboard['alerts_count']}")
+    print(f"High-Risk Schemes: {', '.join(dashboard['high_risk_schemes']) if dashboard['high_risk_schemes'] else 'None'}")
+    
+    if dashboard['recent_alerts']:
+        print("\nRecent Alerts:")
+        for alert in dashboard['recent_alerts'][-3:]:
+            print(f"  - {alert['scheme_id']}: {alert['ponzi_probability']:.1%} risk ({alert['severity']})")
+    
+    monitor.plot_monitoring_dashboard()
+    
+    # Summary
+    print("\n" + "="*80)
+    print("ANALYSIS COMPLETE")
+    print("="*80)
+    print("\n📊 Key Insights:")
+    print(f"  • Ponzi networks show {ponzi_features.get('pyramid_score', 0):.2f} pyramid score")
+    print(f"  • Ponzi clustering: {ponzi_features.get('avg_clustering', 0):.2f} vs Legitimate: {legit_features.get('avg_clustering', 0):.2f}")
+    print(f"  • Real-time monitoring detected {dashboard['alerts_count']} suspicious patterns")
+    print("\n📁 Generated Files:")
+    print("  • ponzi_network.png - Ponzi scheme network visualization")
+    print("  • legitimate_network.png - Legitimate scheme network visualization")
+    print("  • monitoring_dashboard.png - Real-time monitoring dashboard")
+    
+    return detector, xgb_model, monitor, ponzi_network, legit_network
+
+if __name__ == "__main__":
+    detector, model, monitor, ponzi_net, legit_net = main()
